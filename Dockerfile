@@ -2,8 +2,8 @@
 # Base: PostGIS for spatial support, adds pgvector for AI/ML vector operations
 # Includes common development extensions
 
-ARG PG_MAJOR=16
-ARG POSTGIS_VERSION=3.4
+ARG PG_MAJOR=17
+ARG POSTGIS_VERSION=3.5
 
 FROM postgis/postgis:${PG_MAJOR}-${POSTGIS_VERSION}
 
