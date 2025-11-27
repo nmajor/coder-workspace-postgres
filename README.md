@@ -147,7 +147,7 @@ CREATE EXTENSION IF NOT EXISTS "your_extension";
 ## 🏷️ Available Tags
 
 - `latest` - Latest build from main branch
-- `16-postgis3.4-pgvector` - Explicit version tag (PostgreSQL 16, PostGIS 3.4)
+- `17-postgis3.5-pgvector` - Explicit version tag (PostgreSQL 17, PostGIS 3.5)
 - `sha-<commit>` - Specific commit builds
 
 ## 🏗️ Building Locally
@@ -188,6 +188,74 @@ To ensure the image is publicly accessible:
 4. Click **Package settings**
 5. Scroll to **Danger Zone**
 6. Click **Change visibility** → **Public**
+
+## ⚠️ Platform Support & ARM64 Limitation
+
+### Current Status
+This image currently builds for **linux/amd64 only**.
+
+### Why No ARM64?
+The base image `postgis/postgis:17-3.5` does not provide ARM64 builds. When multi-platform builds were attempted with `linux/amd64,linux/arm64`, the build failed with:
+
+```
+.buildkit_qemu_emulator: /bin/sh: Invalid ELF image for this architecture
+```
+
+This occurs because:
+1. The PostGIS base image is amd64-only
+2. QEMU emulation cannot run amd64 binaries on ARM64 build nodes
+
+### How to Enable ARM64 (If PostGIS Adds Support)
+
+If `postgis/postgis` releases ARM64 images in the future, update `.github/workflows/build-and-push.yml`:
+
+```yaml
+# Change this line:
+platforms: linux/amd64
+
+# To:
+platforms: linux/amd64,linux/arm64
+```
+
+### Alternative: Build ARM64 from Source
+
+To support ARM64 now, you would need to:
+
+1. Use `postgres:17` as the base instead of `postgis/postgis`
+2. Compile PostGIS from source for ARM64
+3. This significantly increases build complexity and time
+
+Example approach (not implemented):
+```dockerfile
+FROM postgres:17
+
+# Install PostGIS build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libgeos-dev \
+    libproj-dev \
+    libgdal-dev \
+    # ... many more dependencies
+
+# Build PostGIS from source
+RUN wget https://postgis.net/stuff/postgis-3.5.0.tar.gz \
+    && tar xzf postgis-3.5.0.tar.gz \
+    && cd postgis-3.5.0 \
+    && ./configure \
+    && make \
+    && make install
+```
+
+**Recommendation:** Wait for official PostGIS ARM64 support rather than maintaining a custom build.
+
+### Checking PostGIS ARM64 Availability
+
+To check if ARM64 support has been added:
+```bash
+docker manifest inspect postgis/postgis:17-3.5 | grep arm64
+```
+
+If output shows `arm64`, you can enable multi-platform builds.
 
 ## 🤝 Contributing
 
