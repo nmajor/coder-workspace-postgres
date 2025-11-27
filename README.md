@@ -21,7 +21,7 @@ psql -h localhost -U postgres
 
 ## 📦 Included Extensions
 
-This image comes with the following extensions pre-installed and initialized in `template1`:
+This image comes with the following extensions pre-installed and initialized in both `template1` and the default database:
 
 ### Core Extensions
 - `uuid-ossp` - UUID generation functions
@@ -36,8 +36,10 @@ This image comes with the following extensions pre-installed and initialized in 
 - `postgis` - Spatial data types and functions
 - `postgis_topology` - Topology support
 - `postgis_raster` - Raster data support
+- `postgis_tiger_geocoder` - TIGER geocoder for US addresses
 - `fuzzystrmatch` - Fuzzy string matching
 - `address_standardizer` - Address normalization
+- `address_standardizer_data_us` - US address standardization data
 - `pgrouting` - Routing and network analysis algorithms
 
 ### AI/ML Extensions
@@ -70,26 +72,49 @@ resource "docker_container" "postgres" {
 
 ## 🛠️ Using Extensions
 
-Extensions are already created in `template1`, so they're available in all new databases:
+Extensions are already created in both `template1` and the default database, so they're ready to use immediately:
 
 ```sql
--- Create a new database (extensions are already available)
+-- In the default database, extensions are already available
+SELECT uuid_generate_v4();
+SELECT ST_AsText(ST_Point(-71.060316, 48.432044));
+SELECT '[1,2,3]'::vector;
+
+-- Create a new database (extensions inherit from template1)
 CREATE DATABASE myapp;
 
 -- Connect to it
 \c myapp
 
--- Extensions are ready to use
+-- Extensions are already available here too
 SELECT uuid_generate_v4();
-SELECT ST_AsText(ST_Point(-71.060316, 48.432044));
-SELECT '[1,2,3]'::vector;
 ```
 
-If you need to create them manually:
+If you need to create them manually in a new database:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "postgis";
 CREATE EXTENSION IF NOT EXISTS "vector";
+```
+
+## ✅ Verifying Extensions
+
+To verify that all extensions are properly installed:
+
+```sql
+-- List all available extensions
+SELECT * FROM pg_available_extensions WHERE name IN (
+    'postgis', 'vector', 'pgrouting', 'http', 'pg_cron',
+    'uuid-ossp', 'hstore', 'pg_trgm'
+) ORDER BY name;
+
+-- List all installed extensions in current database
+SELECT * FROM pg_extension ORDER BY extname;
+
+-- Check specific extension versions
+SELECT PostGIS_Version();
+SELECT extversion FROM pg_extension WHERE extname = 'vector';
+SELECT extversion FROM pg_extension WHERE extname = 'http';
 ```
 
 ## 🔄 Adding More Extensions
@@ -132,12 +157,25 @@ CREATE EXTENSION IF NOT EXISTS "your_extension";
 docker build -t postgres-dev .
 
 # Run it
-docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres-dev
+docker run -d \
+  --name postgres-dev \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  postgres-dev
 
-# Test extensions
-docker exec -it <container-id> psql -U postgres -c "SELECT version();"
-docker exec -it <container-id> psql -U postgres -c "SELECT PostGIS_Version();"
-docker exec -it <container-id> psql -U postgres -c "SELECT vector_version();"
+# Test extensions are installed
+docker exec -it postgres-dev psql -U postgres -c "SELECT version();"
+docker exec -it postgres-dev psql -U postgres -c "SELECT PostGIS_Version();"
+docker exec -it postgres-dev psql -U postgres -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+
+# Verify all extensions are available
+docker exec -it postgres-dev psql -U postgres -c "SELECT extname FROM pg_extension ORDER BY extname;"
+
+# Test pgvector functionality
+docker exec -it postgres-dev psql -U postgres -c "SELECT '[1,2,3]'::vector <-> '[4,5,6]'::vector;"
+
+# Cleanup
+docker stop postgres-dev && docker rm postgres-dev
 ```
 
 ## 🔒 Making the Image Public

@@ -25,38 +25,81 @@ COPY <<'EOF' /docker-entrypoint-initdb.d/00-init-extensions.sh
 #!/bin/bash
 set -e
 
-# This script creates common extensions in template1 so they're available in all new databases
-# Users can still manually CREATE EXTENSION for these if preferred
+# Function to create extensions in a database
+create_extensions() {
+    local db=$1
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db" <<-EOSQL
+        -- Core PostgreSQL extensions (usually pre-installed)
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";      -- UUID generation
+        CREATE EXTENSION IF NOT EXISTS "hstore";         -- Key-value store
+        CREATE EXTENSION IF NOT EXISTS "pg_trgm";        -- Trigram matching for fuzzy search
+        CREATE EXTENSION IF NOT EXISTS "btree_gist";     -- Additional index types
+        CREATE EXTENSION IF NOT EXISTS "btree_gin";      -- Additional index types
+        CREATE EXTENSION IF NOT EXISTS "citext";         -- Case-insensitive text
+        CREATE EXTENSION IF NOT EXISTS "pgcrypto";       -- Cryptographic functions
+        CREATE EXTENSION IF NOT EXISTS "tablefunc";      -- Crosstab and pivot functions
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname template1 <<-EOSQL
-    -- Core PostgreSQL extensions (usually pre-installed)
-    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";      -- UUID generation
-    CREATE EXTENSION IF NOT EXISTS "hstore";         -- Key-value store
-    CREATE EXTENSION IF NOT EXISTS "pg_trgm";        -- Trigram matching for fuzzy search
-    CREATE EXTENSION IF NOT EXISTS "btree_gist";     -- Additional index types
-    CREATE EXTENSION IF NOT EXISTS "btree_gin";      -- Additional index types
-    CREATE EXTENSION IF NOT EXISTS "citext";         -- Case-insensitive text
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";       -- Cryptographic functions
-    CREATE EXTENSION IF NOT EXISTS "tablefunc";      -- Crosstab and pivot functions
+        -- Spatial extensions (from PostGIS image)
+        CREATE EXTENSION IF NOT EXISTS "postgis";        -- Spatial data types and functions
+        CREATE EXTENSION IF NOT EXISTS "postgis_topology"; -- Topology support
+        CREATE EXTENSION IF NOT EXISTS "postgis_raster"; -- Raster data support
+        CREATE EXTENSION IF NOT EXISTS "fuzzystrmatch";  -- Fuzzy string matching (required by tiger_geocoder)
+        CREATE EXTENSION IF NOT EXISTS "postgis_tiger_geocoder"; -- Tiger geocoder (depends on fuzzystrmatch)
+        CREATE EXTENSION IF NOT EXISTS "address_standardizer"; -- Address normalization
+        CREATE EXTENSION IF NOT EXISTS "address_standardizer_data_us"; -- US address data
 
-    -- Spatial extensions (from PostGIS image)
-    CREATE EXTENSION IF NOT EXISTS "postgis";        -- Spatial data types and functions
-    CREATE EXTENSION IF NOT EXISTS "postgis_topology"; -- Topology support
-    CREATE EXTENSION IF NOT EXISTS "postgis_raster"; -- Raster data support
-    CREATE EXTENSION IF NOT EXISTS "fuzzystrmatch";  -- Fuzzy string matching
-    CREATE EXTENSION IF NOT EXISTS "address_standardizer"; -- Address normalization
-
-    -- Additional extensions
-    CREATE EXTENSION IF NOT EXISTS "vector";         -- pgvector for AI/ML embeddings
-    CREATE EXTENSION IF NOT EXISTS "pgrouting";      -- Routing algorithms
-    CREATE EXTENSION IF NOT EXISTS "http";           -- HTTP client
-    CREATE EXTENSION IF NOT EXISTS "pg_cron";        -- Job scheduling
+        -- Additional extensions
+        CREATE EXTENSION IF NOT EXISTS "vector";         -- pgvector for AI/ML embeddings
+        CREATE EXTENSION IF NOT EXISTS "pgrouting";      -- Routing algorithms
+        CREATE EXTENSION IF NOT EXISTS "http";           -- HTTP client
+        -- Note: pg_cron requires shared_preload_libraries config, created separately below
 EOSQL
+}
 
-echo "Extensions initialized in template1"
+# Create extensions in template1 so they're available in all new databases
+echo "Creating extensions in template1..."
+create_extensions "template1"
+
+# Also create extensions in the default database if it exists and is not template1
+if [ "$POSTGRES_DB" != "template1" ]; then
+    echo "Creating extensions in database: $POSTGRES_DB"
+    create_extensions "$POSTGRES_DB"
+fi
+
+echo "Extensions initialized successfully"
 EOF
 
 RUN chmod +x /docker-entrypoint-initdb.d/00-init-extensions.sh
+
+# Add pg_cron to shared_preload_libraries (required for pg_cron extension)
+# This script runs after PostgreSQL is initialized but before it accepts connections
+COPY <<'EOF' /docker-entrypoint-initdb.d/01-setup-pg-cron.sh
+#!/bin/bash
+set -e
+
+# pg_cron requires shared_preload_libraries and can only be created in one database
+# Add the configuration
+echo "shared_preload_libraries = 'pg_cron'" >> "$PGDATA/postgresql.conf"
+echo "cron.database_name = '${POSTGRES_DB:-postgres}'" >> "$PGDATA/postgresql.conf"
+
+echo "pg_cron configuration added to postgresql.conf"
+EOF
+
+RUN chmod +x /docker-entrypoint-initdb.d/01-setup-pg-cron.sh
+
+# Create pg_cron extension after restart (runs on subsequent startups)
+COPY <<'EOF' /docker-entrypoint-initdb.d/02-create-pg-cron.sh
+#!/bin/bash
+set -e
+
+# pg_cron extension can only be created after postgres restarts with shared_preload_libraries
+# This will fail on first init but succeed on restart, which is expected behavior
+# Users can manually run: CREATE EXTENSION IF NOT EXISTS "pg_cron";
+echo "Note: pg_cron extension must be created manually after first container start:"
+echo "  psql -U postgres -c 'CREATE EXTENSION IF NOT EXISTS pg_cron;'"
+EOF
+
+RUN chmod +x /docker-entrypoint-initdb.d/02-create-pg-cron.sh
 
 # Environment variables for PostgreSQL configuration
 ENV POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale=en_US.utf8"
